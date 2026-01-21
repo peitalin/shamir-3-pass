@@ -1,4 +1,4 @@
-# shamir-3-pass
+# Shamir Three Pass Protocol
 
 Rust implementation of the Shamir 3-pass (commutative encryption) protocol, intended for use in native and `wasm32` builds.
 
