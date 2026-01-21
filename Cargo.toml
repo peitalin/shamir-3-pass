@@ -1,0 +1,32 @@
+[package]
+name = "shamir-3-pass"
+version = "0.5.0"
+edition = "2021"
+description = "Shamir 3-pass protocol (commutative encryption)"
+repository = "https://github.com/peitalin/shamir-3-pass"
+license = "Apache-2.0"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = true
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+base64ct = { version = "1.6", features = ["alloc"] }
+chacha20poly1305 = "0.10"
+getrandom = "0.2"
+hkdf = "0.12"
+sha2 = "0.10"
+# Shamir3Pass
+num-bigint = "0.4"
+num-traits = "0.2"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
