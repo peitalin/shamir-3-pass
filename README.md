@@ -10,11 +10,14 @@ Shamir 3-pass is a *commutative lock* on the KEK:
 - Locks commute, so the order doesn’t matter: `(kek^e_c)^e_s = (kek^e_s)^e_c`.
 - Each lock has an inverse exponent `d` so you can remove your own lock: `(kek^e)^d = kek`.
 
-- **Registration**: `kek → kek_c → kek_cs → kek_s`
+This allows a client to store server encrypted secrets, and decrypt them without the server ever seeing the secret.
+
+- **1. Locking Step**: `kek → kek_c → kek_cs → kek_s`
   - Client adds its lock: `kek_c = kek^e_c mod p`
   - Server adds its lock: `kek_cs = kek_c^e_s mod p`
   - Client removes its lock: `kek_s = kek_cs^d_c mod p` (stored; still locked by server)
-- **Login**: `kek_s → kek_st → kek_t → kek`
+
+- **2. Unlock Step**: `kek_s → kek_st → kek_t → kek`
   - Client adds a fresh temporary lock: `kek_st = kek_s^e_t mod p`
   - Server removes its lock: `kek_t = kek_st^d_s mod p`
   - Client removes its temporary lock: `kek = kek_t^d_t mod p`
