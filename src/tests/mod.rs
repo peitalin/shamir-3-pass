@@ -1,10 +1,10 @@
 use std::sync::OnceLock;
 
-use crate::{GroupElement, ModpGroup, Shamir3Pass};
+use crate::{GroupElement, Shamir3Pass};
 
 fn shamir() -> &'static Shamir3Pass {
     static SHAMIR: OnceLock<Shamir3Pass> = OnceLock::new();
-    SHAMIR.get_or_init(|| Shamir3Pass::from_group(ModpGroup::Rfc3526Group14))
+    SHAMIR.get_or_init(Shamir3Pass::default)
 }
 
 fn element(value: u64) -> GroupElement {

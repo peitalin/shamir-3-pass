@@ -7,6 +7,18 @@ use crate::{decode_biguint_b64u, LockKeyPairBytes, ModpGroup, Shamir3Pass, Shami
 #[test]
 fn built_in_group_has_expected_identity_and_size() {
     let protocol = shamir();
+    assert_eq!(protocol.group_id(), Some("rfc2409-group2"));
+    assert_eq!(
+        decode_biguint_b64u(&protocol.modulus_b64u())
+            .unwrap()
+            .bits(),
+        1024
+    );
+}
+
+#[test]
+fn stronger_built_in_group_has_expected_identity_and_size() {
+    let protocol = Shamir3Pass::from_group(ModpGroup::Rfc3526Group14);
     assert_eq!(protocol.group_id(), Some("rfc3526-group14"));
     assert_eq!(
         decode_biguint_b64u(&protocol.modulus_b64u())
@@ -17,16 +29,35 @@ fn built_in_group_has_expected_identity_and_size() {
 }
 
 #[test]
-fn built_in_group_modulus_is_a_safe_prime() {
-    let modulus = decode_biguint_b64u(&shamir().modulus_b64u()).unwrap();
-    assert!(crate::utils::is_safe_prime(&modulus).unwrap());
+fn rfc_768_bit_group_has_expected_identity_and_size() {
+    let protocol = Shamir3Pass::from_group(ModpGroup::Rfc2409Group1);
+    assert_eq!(protocol.group_id(), Some("rfc2409-group1"));
+    assert_eq!(
+        decode_biguint_b64u(&protocol.modulus_b64u())
+            .unwrap()
+            .bits(),
+        768
+    );
 }
 
 #[test]
-fn rejects_small_custom_modulus_before_primality_testing() {
+fn built_in_group_moduli_are_safe_primes() {
+    for group in [
+        ModpGroup::Rfc2409Group1,
+        ModpGroup::Rfc2409Group2,
+        ModpGroup::Rfc3526Group14,
+    ] {
+        let protocol = Shamir3Pass::from_group(group);
+        let modulus = decode_biguint_b64u(&protocol.modulus_b64u()).unwrap();
+        assert!(crate::utils::is_safe_prime(&modulus).unwrap());
+    }
+}
+
+#[test]
+fn rejects_custom_modulus_below_256_bits() {
     assert!(matches!(
         Shamir3Pass::from_safe_prime(BigUint::from(65_537u32)),
-        Err(Shamir3PassError::PrimeTooSmall { .. })
+        Err(Shamir3PassError::PrimeTooSmall { min_bits: 256, .. })
     ));
 }
 
@@ -53,7 +84,7 @@ fn exported_pair_round_trips_through_checked_import() {
 
 #[test]
 fn deterministic_derivation_is_stable_and_context_separated() {
-    let protocol = Shamir3Pass::from_group(ModpGroup::Rfc3526Group14);
+    let protocol = Shamir3Pass::default();
     let root = [0x42; 32];
     let first = protocol
         .derive_lock_key_pair(&root, b"example/server-lock/v1")
@@ -76,7 +107,7 @@ fn deterministic_derivation_is_stable_and_context_separated() {
 
 #[test]
 fn deterministic_derived_pair_has_a_fixed_interoperability_vector() {
-    let protocol = shamir();
+    let protocol = Shamir3Pass::from_group(ModpGroup::Rfc3526Group14);
     let encoded = protocol
         .derive_lock_key_pair(&[0x42; 32], b"test/server/v1")
         .unwrap()

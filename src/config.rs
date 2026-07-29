@@ -1,7 +1,7 @@
 //! Protocol constants.
 
 /// Minimum accepted custom safe-prime size.
-pub const SHAMIR_MIN_SAFE_PRIME_BITS: usize = 2048;
+pub const SHAMIR_MIN_SAFE_PRIME_BITS: usize = 256;
 
 /// Maximum attempts for generating an invertible exponent (gcd(k, p-1) = 1).
 pub const SHAMIR_REJECTION_SAMPLING_MAX_ATTEMPTS: usize = 128;
@@ -12,6 +12,24 @@ pub const SHAMIR_LOCK_KEY_DERIVATION_SALT: &[u8] = b"shamir-3-pass/lock-key-pair
 /// HKDF info label for deriving the optional AEAD key from the KEK.
 #[cfg(feature = "aead")]
 pub const SHAMIR_AEAD_HKDF_INFO: &[u8] = b"shamir3pass-kek-aead-v1";
+
+/// RFC 2409 768-bit MODP Group (group 1) safe prime.
+pub const RFC2409_GROUP1_MODULUS_HEX: &str = concat!(
+    "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1",
+    "29024E088A67CC74020BBEA63B139B22514A08798E3404DD",
+    "EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245",
+    "E485B576625E7EC6F44C42E9A63A3620FFFFFFFFFFFFFFFF",
+);
+
+/// RFC 2409 1024-bit MODP Group (group 2) safe prime.
+pub const RFC2409_GROUP2_MODULUS_HEX: &str = concat!(
+    "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1",
+    "29024E088A67CC74020BBEA63B139B22514A08798E3404DD",
+    "EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245",
+    "E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED",
+    "EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE65381",
+    "FFFFFFFFFFFFFFFF",
+);
 
 /// RFC 3526 2048-bit MODP Group (group 14) safe prime.
 pub const RFC3526_GROUP14_MODULUS_HEX: &str = concat!(

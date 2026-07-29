@@ -19,18 +19,23 @@ use zeroize::Zeroizing;
 #[cfg(feature = "aead")]
 use crate::config::SHAMIR_AEAD_HKDF_INFO;
 use crate::config::{
-    RFC3526_GROUP14_MODULUS_HEX, SHAMIR_LOCK_KEY_DERIVATION_SALT, SHAMIR_MIN_SAFE_PRIME_BITS,
+    RFC2409_GROUP1_MODULUS_HEX, RFC2409_GROUP2_MODULUS_HEX, RFC3526_GROUP14_MODULUS_HEX,
+    SHAMIR_LOCK_KEY_DERIVATION_SALT, SHAMIR_MIN_SAFE_PRIME_BITS,
     SHAMIR_REJECTION_SAMPLING_MAX_ATTEMPTS,
 };
 use crate::error::Shamir3PassError;
 use crate::utils::{decode_biguint_b64u, encode_biguint_b64u, extended_gcd, gcd_biguint};
 
-const MIN_EXPONENT: u128 = 1u128 << 64;
 const DERIVATION_INFO_PREFIX: &[u8] = b"shamir-3-pass/lock-key-pair/v1";
+const MIN_EXPONENT: u128 = 1u128 << 64;
 
 /// A reviewed, built-in safe-prime group.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ModpGroup {
+    /// RFC 2409 768-bit MODP Group (group 1).
+    Rfc2409Group1,
+    /// RFC 2409 1024-bit MODP Group (group 2).
+    Rfc2409Group2,
     /// RFC 3526 2048-bit MODP Group (group 14).
     Rfc3526Group14,
 }
@@ -38,6 +43,8 @@ pub enum ModpGroup {
 impl ModpGroup {
     pub const fn id(self) -> &'static str {
         match self {
+            Self::Rfc2409Group1 => "rfc2409-group1",
+            Self::Rfc2409Group2 => "rfc2409-group2",
             Self::Rfc3526Group14 => "rfc3526-group14",
         }
     }
@@ -110,10 +117,24 @@ pub struct Shamir3Pass {
     min_exponent: BigUint,
 }
 
+impl Default for Shamir3Pass {
+    fn default() -> Self {
+        Self::from_group(ModpGroup::Rfc2409Group2)
+    }
+}
+
 impl Shamir3Pass {
     /// Construct the protocol with reviewed built-in parameters.
     pub fn from_group(group: ModpGroup) -> Self {
         let p = match group {
+            ModpGroup::Rfc2409Group1 => {
+                BigUint::parse_bytes(RFC2409_GROUP1_MODULUS_HEX.as_bytes(), 16)
+                    .expect("RFC 2409 group 1 constant must be valid hexadecimal")
+            }
+            ModpGroup::Rfc2409Group2 => {
+                BigUint::parse_bytes(RFC2409_GROUP2_MODULUS_HEX.as_bytes(), 16)
+                    .expect("RFC 2409 group 2 constant must be valid hexadecimal")
+            }
             ModpGroup::Rfc3526Group14 => {
                 BigUint::parse_bytes(RFC3526_GROUP14_MODULUS_HEX.as_bytes(), 16)
                     .expect("RFC 3526 group 14 constant must be valid hexadecimal")
@@ -222,6 +243,7 @@ impl Shamir3Pass {
             let mut output = Zeroizing::new(vec![0u8; bytes_len]);
             hkdf.expand(&info, output.as_mut_slice())
                 .map_err(|_| Shamir3PassError::KeyDerivationFailed)?;
+            self.mask_unused_high_bits(output.as_mut_slice());
             let candidate = BigUint::from_bytes_be(output.as_slice());
             if self.is_valid_exponent(&candidate) {
                 return self.key_pair_from_add_exponent(candidate);
@@ -269,6 +291,7 @@ impl Shamir3Pass {
             let mut bytes = Zeroizing::new(vec![0u8; bytes_len]);
             getrandom(bytes.as_mut_slice())
                 .map_err(|_| Shamir3PassError::RandomGenerationFailed)?;
+            self.mask_unused_high_bits(bytes.as_mut_slice());
             let candidate = BigUint::from_bytes_be(bytes.as_slice());
             if self.is_valid_exponent(&candidate) {
                 return Ok(candidate);
@@ -281,6 +304,13 @@ impl Shamir3Pass {
         value >= &self.min_exponent
             && value <= &self.max_value
             && gcd_biguint(value, &self.p_minus_1) == BigUint::one()
+    }
+
+    fn mask_unused_high_bits(&self, bytes: &mut [u8]) {
+        let top_bits = self.p.bits() as usize % 8;
+        if top_bits != 0 {
+            bytes[0] &= (1u8 << top_bits) - 1;
+        }
     }
 
     fn mod_inverse(&self, value: &BigUint) -> Option<BigUint> {
@@ -363,6 +393,7 @@ impl Shamir3Pass {
             let mut bytes = Zeroizing::new(vec![0u8; bytes_len]);
             getrandom(bytes.as_mut_slice())
                 .map_err(|_| Shamir3PassError::RandomGenerationFailed)?;
+            self.mask_unused_high_bits(bytes.as_mut_slice());
             let candidate = BigUint::from_bytes_be(bytes.as_slice());
             if let Ok(value) = self.checked_element(candidate) {
                 return Ok(value);

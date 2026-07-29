@@ -16,7 +16,7 @@ This crate:
 
 - has not received a professional audit;
 - uses variable-time `num-bigint` operations;
-- provides a fixed RFC 3526 group and validates custom safe primes probabilistically.
+- provides fixed 768-bit, 1024-bit, and 2048-bit groups and validates custom safe primes probabilistically.
 
 ## Disclosure process
 

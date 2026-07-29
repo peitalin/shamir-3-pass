@@ -23,10 +23,10 @@ shamir-3-pass = { version = "0.6", features = ["aead"] }
 ## Quickstart
 
 ```rust
-use shamir_3_pass::{ModpGroup, Shamir3Pass};
+use shamir_3_pass::Shamir3Pass;
 
 // Shared public protocol parameters. Both parties must use the same group.
-let protocol = Shamir3Pass::from_group(ModpGroup::Rfc3526Group14);
+let protocol = Shamir3Pass::default();
 
 // Server: create the durable lock pair. Persist or deterministically derive this pair.
 let server = protocol.generate_lock_key_pair().unwrap();
@@ -62,10 +62,10 @@ Shamir 3-pass uses commutative exponentiation over a shared public modulus `p`:
 Load one random 32-byte deployment secret from your secret manager and derive the durable server lock:
 
 ```rust
-use shamir_3_pass::{ModpGroup, Shamir3Pass};
+use shamir_3_pass::Shamir3Pass;
 
 let root_secret: [u8; 32] = load_root_secret();
-let protocol = Shamir3Pass::from_group(ModpGroup::Rfc3526Group14);
+let protocol = Shamir3Pass::default();
 
 let server_lock = protocol
     .derive_lock_key_pair(&root_secret, b"server-lock/v1")
@@ -78,7 +78,7 @@ The context is a stable public label. The same root and context reproduce the sa
 
 ## Parameters and validation
 
-`ModpGroup::Rfc3526Group14` supplies the fixed 2048-bit safe prime from RFC 3526. `from_safe_prime` and `from_safe_prime_b64u` accept custom parameters after probabilistic primality checks of `p` and `(p - 1) / 2`; custom moduli smaller than 2048 bits are rejected.
+`Shamir3Pass::default()` uses the 1024-bit MODP group from RFC 2409. `ModpGroup::Rfc2409Group1` provides an explicit 768-bit lower-security option for latency-sensitive applications, while `ModpGroup::Rfc3526Group14` selects the stronger 2048-bit group. `from_safe_prime` and `from_safe_prime_b64u` accept caller-selected safe primes of at least 256 bits after probabilistic primality checks of `p` and `(p - 1) / 2`. The caller is responsible for choosing a custom modulus size appropriate to its security and performance requirements.
 
 External protocol values must enter through `element_from_bytes` or `element_from_b64u`. These constructors reject values outside `[2, p - 2]`. Lock application accepts only a checked `GroupElement` and an opaque key pair, preventing raw exponent mixups in normal API use.
 
