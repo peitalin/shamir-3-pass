@@ -1,114 +1,107 @@
 # shamir-3-pass
 
-Rust implementation of the Shamir 3-pass (commutative encryption) protocol, designed for native and `wasm32` builds.
+Typed Rust primitives for the Shamir three-pass commutative encryption protocol, with native and `wasm32` support.
 
-Shamir's 3-pass protocol is a *commutative lock* over a symmetric key (KEK) using modular exponentiation.
-- Encrypts application data with `ChaCha20Poly1305`; the KEK is turned into an AEAD key via HKDF-SHA256.
-
+Version 0.6 uses a reviewed built-in group, checked group elements, and opaque lock-key pairs. It can deterministically derive independent lock-key pairs from one deployment root secret, which keeps backend configuration small.
 
 ## Installation
 
-MSRV: Rust 1.70+
+MSRV: Rust 1.85+
 
 ```toml
 [dependencies]
-shamir-3-pass = "0.5"
+shamir-3-pass = "0.6"
 ```
 
-Or:
+AEAD helpers are available behind a feature:
 
-```sh
-cargo add shamir-3-pass
+```toml
+[dependencies]
+shamir-3-pass = { version = "0.6", features = ["aead"] }
 ```
 
 ## Quickstart
 
-End-to-end example showing “registration” (store ciphertext + `kek_s`) and “login” (recover KEK and decrypt):
-
 ```rust
-use shamir_3_pass::{generate_shamir_p_b64u, Shamir3Pass};
+use shamir_3_pass::{ModpGroup, Shamir3Pass};
 
-// Setup (shared): generate `p` once, persist it, and share it with the other party.
-// For real deployments, prefer 2048+ bits. (256-bit is accepted but is not a safe default.)
-let p_b64u = generate_shamir_p_b64u(2048).unwrap();
-let shamir = Shamir3Pass::new(&p_b64u).unwrap();
+let protocol = Shamir3Pass::from_group(ModpGroup::Rfc3526Group14);
+let server = protocol.generate_lock_key_pair().unwrap();
+let client = protocol.generate_lock_key_pair().unwrap();
+let value = protocol.element_from_bytes(&123_456u64.to_be_bytes()).unwrap();
 
-// Server: generate long-lived lock keys (e_s, d_s). Persist these securely server-side.
-let server = shamir.generate_lock_keys().unwrap();
+let client_locked = client.add_lock(&protocol, &value);
+let double_locked = server.add_lock(&protocol, &client_locked);
+let server_locked = client.remove_lock(&protocol, &double_locked);
 
-// Client: encrypt some data under a random KEK.
-let (ciphertext, kek) = shamir.encrypt_with_random_kek_key(b"secret").unwrap();
+let temporary = protocol.generate_lock_key_pair().unwrap();
+let double_locked = temporary.add_lock(&protocol, &server_locked);
+let client_locked = server.remove_lock(&protocol, &double_locked);
+let recovered = temporary.remove_lock(&protocol, &client_locked);
 
-// Client: create a one-time lock (e_c, d_c).
-let client = shamir.generate_lock_keys().unwrap();
-
-// Locking step: KEK -> KEK_c -> KEK_cs -> KEK_s (store `ciphertext` + `kek_s` on the server).
-let kek_c = shamir.add_lock(&kek, &client.e);        // client adds lock
-let kek_cs = shamir.add_lock(&kek_c, &server.e);     // server adds lock
-let kek_s = shamir.remove_lock(&kek_cs, &client.d);  // client removes its lock
-
-// Unlock step: KEK_s -> KEK_st -> KEK_t -> KEK (recovered).
-let client_login = shamir.generate_lock_keys().unwrap(); // fresh temporary lock
-let kek_st = shamir.add_lock(&kek_s, &client_login.e);   // client adds temp lock
-let kek_t = shamir.remove_lock(&kek_st, &server.d);      // server removes its lock
-let kek_recovered = shamir.remove_lock(&kek_t, &client_login.d); // client removes temp lock
-
-let plaintext = shamir.decrypt_with_key(&ciphertext, &kek_recovered).unwrap();
-assert_eq!(plaintext, b"secret");
+assert!(recovered == value);
 ```
 
-## Protocol overview
+## Derive backend lock keys from one root secret
 
-Shamir 3-pass uses commutative exponentiation over a shared public modulus `p`:
-
-- Add a lock: `x' = x^e mod p`
-- Remove your lock: `x = (x')^d mod p`, where `e*d ≡ 1 (mod p-1)`
-- Locks commute: `(x^e_c)^e_s = (x^e_s)^e_c`
-
-This lets a client (e.g. browser) store a server-encrypted ciphertext that remains "server-locked" (with `kek_s`), which the client can later send to the server to recover the secret without revealing the plaintext secret to the server.
-
-## Encoding for transport / storage
-
-This crate includes helpers to encode big integers as base64url (unpadded) for storage/transport:
+Load one random 32-byte deployment secret from your secret manager. Derive each independent key pair with a stable, unique context:
 
 ```rust
-use shamir_3_pass::{
-    decode_biguint_b64u, encode_biguint_b64u, generate_shamir_p_b64u, Shamir3Pass,
-};
+use shamir_3_pass::{ModpGroup, Shamir3Pass};
 
-let p_b64u = generate_shamir_p_b64u(2048).unwrap();
-let shamir = Shamir3Pass::new(&p_b64u).unwrap();
-let keys = shamir.generate_lock_keys().unwrap();
+let root_secret: [u8; 32] = load_root_secret();
+let protocol = Shamir3Pass::from_group(ModpGroup::Rfc3526Group14);
 
-let e_b64u = encode_biguint_b64u(&keys.e);
-let e = decode_biguint_b64u(&e_b64u).unwrap();
-assert_eq!(e, keys.e);
+let account_lock = protocol
+    .derive_lock_key_pair(&root_secret, b"my-service/prod/account-lock/v1")
+    .unwrap();
+let recovery_lock = protocol
+    .derive_lock_key_pair(&root_secret, b"my-service/prod/recovery-lock/v1")
+    .unwrap();
+let session_lock = protocol
+    .derive_lock_key_pair(&root_secret, b"my-service/prod/session-lock/v1")
+    .unwrap();
 ```
+
+The same root and context reproduce the same pair. Contexts are public domain-separation labels. Include the service, environment, role, and a version; changing a context rotates that derived pair. Keep the root secret random, store it in a secrets manager, and never derive it from a password or low-entropy configuration value.
+
+`LockKeyPair` does not implement `Clone` or `Debug`, and its exponents are private. `export_secret()` and `import_lock_key_pair()` provide an explicit persistence boundary when derived keys are unsuitable.
+
+## Parameters and validation
+
+`ModpGroup::Rfc3526Group14` supplies the fixed 2048-bit safe prime from RFC 3526. `from_safe_prime` and `from_safe_prime_b64u` accept custom parameters after probabilistic primality checks of `p` and `(p - 1) / 2`; custom moduli smaller than 2048 bits are rejected.
+
+External protocol values must enter through `element_from_bytes` or `element_from_b64u`. These constructors reject values outside `[2, p - 2]`. Lock application accepts only a checked `GroupElement` and an opaque key pair, preventing raw exponent mixups in normal API use.
+
+## Optional AEAD helpers
+
+With the `aead` feature, `encrypt_with_random_kek` encrypts arbitrary bytes using ChaCha20-Poly1305 and a fresh group element as the KEK. `decrypt_with_kek` authenticates and decrypts the result. Applications that already own their data-encryption format can leave the feature disabled.
 
 ## WASM
 
-- Randomness uses `getrandom`; the `js` backend is enabled automatically on `wasm32`.
-- This crate is Rust-first; it supports `wasm32-unknown-unknown` when used from Rust.
+Randomness uses `getrandom`; its JavaScript backend is enabled automatically for `wasm32`.
 
 ```sh
 cargo build --target wasm32-unknown-unknown
 ```
 
+The byte and base64url constructors keep JavaScript/Wasm wrappers thin. This crate does not prescribe a generated JavaScript binding layer.
+
 ## Development
 
 ```sh
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
 cargo test
+cargo test --features aead
 ```
 
-## Security notes
+## Security
 
-- This crate has not been professionally audited. Treat it as "use at your own risk", especially in high-assurance environments.
-- `Shamir3Pass::new()` validates the *size* of `p`, but does not currently prove `p` is prime; generate `p` with `generate_shamir_p(_b64u)` or validate your own modulus before constructing `Shamir3Pass`.
-- Big integer arithmetic (`num-bigint`) is not constant-time; do not assume resistance to timing/side-channel attacks.
-- If you expose `add_lock`/`remove_lock` operations to untrusted inputs while using long-lived exponents, consider range/subgroup validation and parameter choices (e.g., a “safe prime” construction) to reduce the risk of small-subgroup style attacks.
+This crate has not received a professional audit. Its modular exponentiation uses `num-bigint`, which is variable-time. Deploy it only where local timing and cache side channels are outside the threat model, or place operations behind an isolation boundary appropriate to your system.
 
-If you believe you found a security issue, see `SECURITY.md`.
+See [SECURITY.md](SECURITY.md) for the full security scope and vulnerability-reporting process.
 
 ## License
 
-Licensed under the Apache License, Version 2.0. See `LICENSE`.
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
