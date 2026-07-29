@@ -25,26 +25,41 @@ shamir-3-pass = { version = "0.6", features = ["aead"] }
 ```rust
 use shamir_3_pass::{ModpGroup, Shamir3Pass};
 
+// Shared public protocol parameters. Both parties must use the same group.
 let protocol = Shamir3Pass::from_group(ModpGroup::Rfc3526Group14);
+
+// Server: create the durable lock pair. Persist or deterministically derive this pair.
 let server = protocol.generate_lock_key_pair().unwrap();
+
+// Client: create a one-time lock and parse the KEK as a checked group element.
 let client = protocol.generate_lock_key_pair().unwrap();
 let value = protocol.element_from_bytes(&123_456u64.to_be_bytes()).unwrap();
 
-let client_locked = client.add_lock(&protocol, &value);
-let double_locked = server.add_lock(&protocol, &client_locked);
-let server_locked = client.remove_lock(&protocol, &double_locked);
+// Locking step: KEK -> KEK_c -> KEK_cs -> KEK_s (store `ciphertext` + `kek_s` on the server).
+let client_locked = client.add_lock(&protocol, &value);            // KEK -> KEK_c
+let double_locked = server.add_lock(&protocol, &client_locked);    // KEK_c -> KEK_cs
+let server_locked = client.remove_lock(&protocol, &double_locked); // KEK_cs -> KEK_s
 
-let temporary = protocol.generate_lock_key_pair().unwrap();
-let double_locked = temporary.add_lock(&protocol, &server_locked);
-let client_locked = server.remove_lock(&protocol, &double_locked);
-let recovered = temporary.remove_lock(&protocol, &client_locked);
+// Unlock step: KEK_s -> KEK_st -> KEK_t -> KEK (recovered).
+let temporary = protocol.generate_lock_key_pair().unwrap(); // fresh temporary lock
+let double_locked = temporary.add_lock(&protocol, &server_locked); // KEK_s -> KEK_st
+let client_locked = server.remove_lock(&protocol, &double_locked); // KEK_st -> KEK_t
+let recovered = temporary.remove_lock(&protocol, &client_locked);  // KEK_t -> KEK
 
 assert!(recovered == value);
 ```
 
-## Derive backend lock keys from one root secret
+## Protocol overview
 
-Load one random 32-byte deployment secret from your secret manager. Derive each independent key pair with a stable, unique context:
+Shamir 3-pass uses commutative exponentiation over a shared public modulus `p`:
+
+- Add a lock: `x' = x^e mod p`
+- Remove your lock: `x = (x')^d mod p`, where `e*d ≡ 1 (mod p-1)`
+- Locks commute: `(x^e_c)^e_s = (x^e_s)^e_c`
+
+## Derive a backend lock from one root secret
+
+Load one random 32-byte deployment secret from your secret manager and derive the durable server lock:
 
 ```rust
 use shamir_3_pass::{ModpGroup, Shamir3Pass};
@@ -52,18 +67,12 @@ use shamir_3_pass::{ModpGroup, Shamir3Pass};
 let root_secret: [u8; 32] = load_root_secret();
 let protocol = Shamir3Pass::from_group(ModpGroup::Rfc3526Group14);
 
-let account_lock = protocol
-    .derive_lock_key_pair(&root_secret, b"my-service/prod/account-lock/v1")
-    .unwrap();
-let recovery_lock = protocol
-    .derive_lock_key_pair(&root_secret, b"my-service/prod/recovery-lock/v1")
-    .unwrap();
-let session_lock = protocol
-    .derive_lock_key_pair(&root_secret, b"my-service/prod/session-lock/v1")
+let server_lock = protocol
+    .derive_lock_key_pair(&root_secret, b"server-lock/v1")
     .unwrap();
 ```
 
-The same root and context reproduce the same pair. Contexts are public domain-separation labels. Include the service, environment, role, and a version; changing a context rotates that derived pair. Keep the root secret random, store it in a secrets manager, and never derive it from a password or low-entropy configuration value.
+The context is a stable public label. The same root and context reproduce the same pair; changing either rotates it. Keep the root secret random and store it in a secrets manager.
 
 `LockKeyPair` does not implement `Clone` or `Debug`, and its exponents are private. `export_secret()` and `import_lock_key_pair()` provide an explicit persistence boundary when derived keys are unsuitable.
 
